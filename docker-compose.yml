@@ -1,0 +1,33 @@
+# LP Hélder Sorteios — Easypanel (Docker Compose)
+#
+# Cada LP (branch) usa uma porta própria e incomum: PORT é a porta em que o
+# app escuta DENTRO do container E a porta publicada no host. No Easypanel,
+# aponte o domínio (HTTPS) para o serviço "lp" nessa mesma porta.
+#
+# Sem hairpin: o app nunca chama o próprio domínio público. O healthcheck usa
+# 127.0.0.1 dentro do container, e o HTTPS é terminado pelo proxy do Easypanel.
+services:
+  lp:
+    build: .
+    restart: unless-stopped
+    environment:
+      PORT: "6847"                        # <- porta desta LP (branch lp-2 usa 5926)
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?defina ADMIN_PASSWORD no ambiente}
+      SECRET_KEY: ${SECRET_KEY:?defina SECRET_KEY no ambiente}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-1}
+      BEHIND_PROXY: "1"
+    ports:
+      # Só no loopback do servidor (útil p/ teste via SSH). O Easypanel acessa
+      # o container pela rede interna do Docker, então não precisa abrir nada.
+      - "127.0.0.1:6847:6847"
+    volumes:
+      - lp_data:/app/data   # SQLite + imagens enviadas (persistem entre deploys)
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:6847/healthz', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  lp_data:

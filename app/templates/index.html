@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>{{ c.page_title }}</title>
+  <meta name="description" content="{{ c.meta_description }}">
+  <meta property="og:title" content="{{ c.page_title }}">
+  {% if slides %}<meta property="og:image" content="{{ slides[0].image }}">{% endif %}
+  <meta property="og:description" content="{{ c.meta_description }}">
+  {% if c.favicon_image %}<link rel="icon" href="{{ c.favicon_image }}">{% endif %}
+  <meta name="theme-color" content="{{ c.color_black }}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <!-- Uma requisição por fonte: se uma falhar, as outras continuam carregando -->
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders:opsz,wght@10..72,800..900&amp;display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@800;900&amp;display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:ital,wdth,wght@1,62..125,800..900&amp;display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lexend+Exa:wght@900&amp;display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sedgwick+Ave+Display&amp;display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&amp;display=swap">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <style id="theme-vars">:root{--black:{{ c.color_black }};--green:{{ c.color_green }};--white:{{ c.color_white }};--neon:{{ c.color_neon }};}</style>
+  {{ c.head_code|safe }}
+</head>
+<body>
+  <div class="topbar" data-show="show_logo" {{ 'hidden' if c.show_logo != '1' }}>
+    <img class="logo" src="{{ c.logo_image }}" alt="{{ c.logo_alt }}" data-img="logo_image">
+  </div>
+
+
+  <main>
+    <!-- HERO: carrossel com as fotos do prêmio + CTA -->
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero-slides" data-hero data-interval="{{ c.slide_interval }}" aria-label="Fotos do prêmio">
+        {% for s in slides %}
+        <img class="hero-slide{{ ' is-active' if loop.first }}" src="{{ s.image }}" alt="Foto {{ loop.index }} do prêmio"
+             {{ 'fetchpriority=high' if loop.first else 'loading=lazy' }}>
+        {% endfor %}
+      </div>
+      <div class="hero-shade" aria-hidden="true"></div>
+      <div class="hero-dots" data-hero-dots></div>
+
+      <div class="hero-content">
+        <h1 id="hero-title" class="hero-title">
+          <span class="hero-title-main" data-text="hero_title">{{ c.hero_title }}</span>
+          <img class="hero-title-accent-img" src="{{ c.hero_accent_image }}" alt="{{ c.hero_title_accent }}" data-img="hero_accent_image" data-alt="hero_title_accent" width="1063" height="382" {{ 'hidden' if not c.hero_accent_image }}>
+          <span class="hero-title-accent" data-text="hero_title_accent" {{ 'hidden' if c.hero_accent_image }}>{{ c.hero_title_accent }}</span>
+        </h1>
+
+        <a class="cta" href="{{ c.cta_link }}" data-cta {% if c.cta_new_tab == '1' %}target="_blank" {% endif %}rel="noopener"><span data-text="cta_text">{{ c.cta_text }}</span></a>
+        <p class="hero-note" {{ 'hidden' if not c.final_text }} data-text="final_text">{{ c.final_text }}</p>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="footer">
+    <p><span data-text="footer_text">{{ c.footer_text }}</span>
+      <a data-footer-link href="{{ c.footer_link }}" {{ 'hidden' if not (c.footer_link and c.footer_link_text) }}>{{ c.footer_link_text }}</a></p>
+  </footer>
+
+  <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+
+  {% if preview %}<script src="{{ url_for('static', filename='js/preview.js') }}"></script>{% endif %}
+</body>
+</html>

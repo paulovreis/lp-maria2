@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Painel · {{ c.page_title }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+</head>
+<body>
+{% macro text(key, label, hint='', ph='') %}
+  <label class="f"><span>{{ label }}</span><input type="text" data-key="{{ key }}" value="{{ c[key] }}" placeholder="{{ ph }}">{% if hint %}<small>{{ hint }}</small>{% endif %}</label>
+{% endmacro %}
+{% macro color(key, label) %}
+  <label class="color"><input type="color" data-key="{{ key }}" value="{{ c[key] }}"><span>{{ label }}</span></label>
+{% endmacro %}
+{% macro check(key, label) %}
+  <label class="check"><input type="checkbox" data-key="{{ key }}" {{ 'checked' if c[key] == '1' }}><span>{{ label }}</span></label>
+{% endmacro %}
+{% macro image(key, label, optional=true) %}
+  <div class="f img" data-image="{{ key }}">
+    <span>{{ label }}</span>
+    <div class="img-row">
+      <div class="img-thumb"><img src="{{ c[key] }}" alt="" {{ 'hidden' if not c[key] }}><em {{ 'hidden' if c[key] }}>Sem imagem</em></div>
+      <div class="img-btns">
+        <button type="button" class="btn" data-upload>Enviar nova</button>
+        {% if optional %}<button type="button" class="btn btn-ghost" data-clear>Remover</button>{% endif %}
+      </div>
+    </div>
+    <input type="text" data-key="{{ key }}" value="{{ c[key] }}" placeholder="ou cole o endereço da imagem (https://…)">
+  </div>
+{% endmacro %}
+
+<header class="top">
+  <strong>Painel da landing page</strong>
+  <span class="status" id="status" data-state="clean">Tudo salvo</span>
+  <a class="btn btn-ghost" href="/" target="_blank" rel="noopener">Abrir site ↗</a>
+  <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-ghost">Sair</button></form>
+  <button type="button" class="btn btn-primary" id="save">Salvar e publicar</button>
+</header>
+
+<div class="layout">
+  <nav class="tabs" aria-label="Seções">
+    <button data-tab="topo" class="is-active">Topo</button>
+    <button data-tab="carrossel">Carrossel</button>
+    <button data-tab="botao">Botão</button>
+    <button data-tab="aparencia">Cores e logo</button>
+    <button data-tab="rodape">Rodapé</button>
+    <button data-tab="pagina">Página e SEO</button>
+    <button data-tab="avancado">Avançado</button>
+  </nav>
+
+  <main class="forms">
+    <section data-pane="topo">
+      <h2>Topo da página</h2>
+      {{ text('hero_title', 'Título principal', 'Ex.: Golf GTI') }}
+      {{ image('hero_accent_image', 'Destaque em imagem (ex.: STAGE 2)') }}
+      {{ text('hero_title_accent', 'Texto do destaque', 'Aparece escrito se não houver imagem de destaque, e serve de descrição da imagem.') }}
+      {{ text('final_text', 'Texto abaixo do botão', 'Deixe vazio para esconder.') }}
+    </section>
+
+    <section data-pane="carrossel" hidden>
+      <h2>Fotos do carrossel</h2>
+      <p class="help">A primeira foto abre a página. Use ↑ ↓ para mudar a ordem. Máximo de {{ max_slides }} fotos.</p>
+      <ol id="slides" class="slides"></ol>
+      <button type="button" class="btn" id="add-slide">+ Adicionar foto</button>
+      <label class="f mt"><span>Tempo de cada foto (segundos)</span><input type="number" min="2" max="30" data-key="slide_interval" value="{{ c.slide_interval }}"></label>
+    </section>
+
+    <section data-pane="botao" hidden>
+      <h2>Botão principal</h2>
+      {{ text('cta_text', 'Texto do botão') }}
+      {{ text('cta_link', 'Link do botão', 'Para onde o visitante vai ao clicar (https://…, WhatsApp wa.me/…, etc.).') }}
+      {{ check('cta_new_tab', 'Abrir o link em uma nova aba') }}
+    </section>
+
+    <section data-pane="aparencia" hidden>
+      <h2>Cores</h2>
+      <div class="colors">
+        {{ color('color_black', 'Fundo (preto)') }}
+        {{ color('color_green', 'Verde') }}
+        {{ color('color_white', 'Texto (branco)') }}
+        {{ color('color_neon', 'Neon (botão e destaque)') }}
+      </div>
+      <h2>Logo</h2>
+      {{ check('show_logo', 'Mostrar a logo no topo da página') }}
+      {{ image('logo_image', 'Imagem da logo', false) }}
+      {{ text('logo_alt', 'Descrição da logo (acessibilidade)') }}
+    </section>
+
+    <section data-pane="rodape" hidden>
+      <h2>Rodapé</h2>
+      {{ text('footer_text', 'Texto do rodapé') }}
+      {{ text('footer_link_text', 'Texto do link (opcional)', 'Ex.: Política de privacidade ou Instagram.') }}
+      {{ text('footer_link', 'Endereço do link (opcional)') }}
+    </section>
+
+    <section data-pane="pagina" hidden>
+      <h2>Página e SEO</h2>
+      {{ text('page_title', 'Título da aba do navegador', 'Também é o título quando o link é compartilhado.') }}
+      {{ text('meta_description', 'Descrição (Google e redes sociais)') }}
+      {{ image('favicon_image', 'Ícone da aba (favicon)') }}
+    </section>
+
+    <section data-pane="avancado" hidden>
+      <h2>Avançado</h2>
+      <label class="f"><span>Código extra no &lt;head&gt;</span>
+        <textarea data-key="head_code" rows="8" spellcheck="false" placeholder="Cole aqui o Pixel do Meta, Google Tag Manager, etc.">{{ c.head_code }}</textarea>
+        <small>Use só código de fontes confiáveis: ele roda para todos os visitantes. Não aparece na prévia ao lado.</small></label>
+    </section>
+  </main>
+
+  <aside class="preview">
+    <div class="preview-bar">
+      <span>Prévia</span>
+      <button type="button" class="btn btn-ghost is-active" data-device="desktop">Computador</button>
+      <button type="button" class="btn btn-ghost" data-device="mobile">Celular</button>
+    </div>
+    <div class="frame-wrap" id="frame-wrap" data-device="desktop">
+      <iframe id="frame" src="/?preview=1" title="Prévia da página"></iframe>
+    </div>
+  </aside>
+</div>
+
+<script>window.LP_STATE = { csrf: {{ csrf|tojson }}, slides: {{ slides|tojson }}, maxSlides: {{ max_slides }} };</script>
+<script src="{{ url_for('static', filename='js/admin.js') }}"></script>
+</body>
+</html>

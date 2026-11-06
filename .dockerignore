@@ -1,0 +1,7 @@
+.env
+data/
+**/__pycache__
+*.sqlite3*
+.git
+.dist
+Prévia_*.html

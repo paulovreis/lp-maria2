@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Entrar no modo de edição</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 0; min-height: 100svh; display: grid; place-items: center; background: #000; color: #fff;
+           font: 500 1rem/1.5 "Manrope", system-ui, sans-serif; padding: 1.5rem; box-sizing: border-box; }
+    form { width: min(360px, 100%); display: grid; gap: .9rem; }
+    h1 { margin: 0; font-size: 1.4rem; }
+    p { margin: 0; color: #a9afb5; }
+    input { padding: .85rem .9rem; border-radius: 10px; border: 1px solid #383c41; background: #111315; color: #fff; font: inherit; }
+    input:focus { outline: 2px solid #6ECE30; outline-offset: 1px; }
+    button { padding: .9rem; border: 0; border-radius: 10px; background: #6ECE30; color: #000; font: 800 1rem/1 inherit; cursor: pointer; }
+    .error { color: #ff7a7a; font-weight: 700; }
+    a { color: #a9afb5; font-size: .9rem; }
+  </style>
+</head>
+<body>
+  <form method="post">
+    <h1>Modo de edição</h1>
+    <p>Digite a senha de administrador para editar a página.</p>
+    {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+    <input type="password" name="password" placeholder="Senha" autocomplete="current-password" required autofocus aria-label="Senha">
+    <button type="submit">Entrar</button>
+    <a href="/">Voltar para a página</a>
+  </form>
+</body>
+</html>
