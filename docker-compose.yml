@@ -11,7 +11,7 @@ services:
     build: .
     restart: unless-stopped
     environment:
-      PORT: "6847"                        # <- porta desta LP (branch lp-2 usa 5926)
+      PORT: "5926"                        # <- porta desta LP (branch lp-1 usa 6847)
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?defina ADMIN_PASSWORD no ambiente}
       SECRET_KEY: ${SECRET_KEY:?defina SECRET_KEY no ambiente}
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-1}
@@ -19,11 +19,11 @@ services:
     ports:
       # Só no loopback do servidor (útil p/ teste via SSH). O Easypanel acessa
       # o container pela rede interna do Docker, então não precisa abrir nada.
-      - "127.0.0.1:6847:6847"
+      - "127.0.0.1:5926:5926"
     volumes:
       - lp_data:/app/data   # SQLite + imagens enviadas (persistem entre deploys)
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:6847/healthz', timeout=4)"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5926/healthz', timeout=4)"]
       interval: 30s
       timeout: 5s
       retries: 3

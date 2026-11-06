@@ -3,7 +3,7 @@ FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     DATA_DIR=/app/data \
-    PORT=6847
+    PORT=5926
 
 WORKDIR /app
 
