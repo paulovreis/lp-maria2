@@ -8,9 +8,10 @@ Flask + SQLite em Docker. Tudo (textos, imagens, carrossel, botão, links, cores
 |--------|----|--------------------------|
 | `lp-1` | LP 1 | **6847** |
 | `lp-2` | LP 2 | **5926** |
+| `lp-3` | LP 3 | **8352** |
 | `main` | base comum (porta 6847) | — |
 
-As duas branches têm o mesmo código; só mudam a porta no `docker-compose.yml` (3 linhas) e no `Dockerfile`. Mudanças no código vão para `main` e depois `git merge main` em cada branch (os conflitos, se houver, ficam só na porta).
+As branches têm o mesmo código; só mudam a porta no `docker-compose.yml` (3 linhas) e no `Dockerfile`. Mudanças no código vão para `main` e depois `git merge main` em cada branch (os conflitos, se houver, ficam só na porta).
 
 ## Deploy no Easypanel (uma aplicação por branch)
 
