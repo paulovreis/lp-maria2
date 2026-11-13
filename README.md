@@ -42,3 +42,10 @@ Senha só por variável de ambiente, cookie HttpOnly/Secure, CSRF em todas as a�
 ## Fontes
 
 "STAGE 2" usa a Sprite Graffiti (licença em `app/static/fonts/`). O título antigo "Petchlamoon" é opcional e não é usado nesta versão.
+
+## Desempenho
+
+- **gunicorn `gthread`** (2 workers × 8 threads, ajustável por `WEB_WORKERS`/`WEB_THREADS`): imagens lentas de um visitante não travam os demais.
+- **Cache**: `/static` e `/uploads` com `Cache-Control: immutable` por 1 ano (URLs com `?v=`), página com `ETag` + 30 s de cache, HTML renderizado guardado em memória (5 s, descartado ao salvar no painel).
+- **Compressão** brotli/gzip; fontes locais (sem Google Fonts); imagens em WebP; uploads do painel são reduzidos (máx. 1920 px) e convertidos para WebP.
+- **SQLite** em WAL com índice no carrossel.
