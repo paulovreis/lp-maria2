@@ -19,4 +19,4 @@ USER appuser
 
 # --preload: o banco é criado uma única vez antes de subir os workers.
 # Porta vem de $PORT (cada LP usa a sua, definida no docker-compose.yml).
-CMD ["sh", "-c", "exec gunicorn --preload -w 2 -b 0.0.0.0:${PORT} --access-logfile - --forwarded-allow-ips='*' app:app"]
+CMD ["sh", "-c", "exec gunicorn --preload -k gthread -w ${WEB_WORKERS:-2} --threads ${WEB_THREADS:-8} --worker-tmp-dir /dev/shm --keep-alive 15 --timeout 30 --graceful-timeout 20 --max-requests 5000 --max-requests-jitter 500 -b 0.0.0.0:${PORT} --access-logfile - --forwarded-allow-ips=* app:app"]

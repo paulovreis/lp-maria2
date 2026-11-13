@@ -3,7 +3,9 @@ Landing page editável — Hélder Sorteios
 Flask + SQLite. Todo o conteúdo (textos, imagens, cores, links, carrossel)
 fica no banco e é editado em /admin. Salvou, vale na hora para todo mundo.
 """
+import hashlib
 import hmac
+import io
 import os
 import re
 import secrets
@@ -15,16 +17,20 @@ from datetime import timedelta
 from functools import wraps
 
 from flask import (
-    Flask, g, jsonify, redirect, render_template, request,
+    Flask, g, jsonify, make_response, redirect, render_template, request,
     send_from_directory, session, url_for,
 )
+from flask_compress import Compress
+from PIL import Image, ImageOps, UnidentifiedImageError
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(BASE_DIR, "data"))
 DB_PATH = os.path.join(DATA_DIR, "lp.sqlite3")
 UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")
-ALLOWED_EXT = {"png", "jpg", "jpeg", "webp", "gif"}
+Image.MAX_IMAGE_PIXELS = 40_000_000   # barra "bombas" de descompressão
+MAX_IMAGE_SIDE = 1920                  # uploads são reduzidos a isso
+PAGE_TTL = 5                           # s: cache do HTML renderizado em cada worker
 MAX_SLIDES = 15
 
 app = Flask(__name__)
@@ -36,7 +42,13 @@ app.config.update(
     SESSION_COOKIE_SECURE=os.environ.get("SESSION_COOKIE_SECURE", "0") == "1",
     PERMANENT_SESSION_LIFETIME=timedelta(hours=12),
     JSON_AS_ASCII=False,
+    SEND_FILE_MAX_AGE_DEFAULT=timedelta(days=365),   # /static e /uploads: URLs versionadas
+    COMPRESS_ALGORITHM=["br", "gzip"],
+    COMPRESS_MIN_SIZE=500,
+    COMPRESS_LEVEL=6,
+    COMPRESS_BR_LEVEL=4,
 )
+Compress(app)
 # Atrás do proxy do Easypanel (Traefik): confia nos cabeçalhos X-Forwarded-*
 # para enxergar o IP real do visitante e o esquema https.
 if os.environ.get("BEHIND_PROXY", "1") == "1":
@@ -51,16 +63,16 @@ DEFAULT_CONTENT = {
     # Página / SEO
     "page_title": "Hélder Sorteios | Concorra a um Golf GTI Stage 2",
     "meta_description": "Concorra a um Golf GTI Stage 2 com a Hélder Sorteios.",
-    "favicon_image": "/static/img/logo.png",
+    "favicon_image": "/static/img/logo.webp",
     "head_code": "",
     # Logo
     "show_logo": "0",
-    "logo_image": "/static/img/logo.png",
+    "logo_image": "/static/img/logo.webp",
     "logo_alt": "HS Hélder Sorteios",
     # Topo
     "hero_title": "Golf GTI",
     "hero_title_accent": "STAGE 2",
-    "hero_accent_image": "/static/img/stage2.png",
+    "hero_accent_image": "/static/img/stage2.webp",
     "slide_interval": "5",
     # Botão
     "cta_text": "Clique aqui",
@@ -79,12 +91,26 @@ DEFAULT_CONTENT = {
 }
 
 DEFAULT_SLIDES = [
-    "/static/img/premio/golf-frente.jpg",
-    "/static/img/premio/golf-lateral.jpg",
-    "/static/img/premio/golf-painel.jpg",
-    "/static/img/premio/golf-bancos.jpg",
-    "/static/img/premio/golf-banco-traseiro.jpg",
+    "/static/img/premio/golf-frente.webp",
+    "/static/img/premio/golf-lateral.webp",
+    "/static/img/premio/golf-painel.webp",
+    "/static/img/premio/golf-bancos.webp",
+    "/static/img/premio/golf-banco-traseiro.webp",
 ]
+
+# Caminhos antigos (jpg/png) → versões otimizadas. Aplicado ao subir, em bancos já existentes.
+LEGACY_PATHS = {
+    f"/static/img/premio/golf-{n}.jpg": f"/static/img/premio/golf-{n}.webp"
+    for n in ("frente", "lateral", "painel", "bancos", "banco-traseiro")
+}
+LEGACY_PATHS.update({"/static/img/stage2.webp": "/static/img/stage2.webp", "/static/img/logo.webp": "/static/img/logo.webp"})
+
+# Caminhos antigos (jpg/png) -> versões otimizadas. Aplicado ao subir, em bancos já existentes.
+LEGACY_PATHS = {
+    f"/static/img/premio/golf-{n}.jpg": f"/static/img/premio/golf-{n}.webp"
+    for n in ("frente", "lateral", "painel", "bancos", "banco-traseiro")
+}
+LEGACY_PATHS.update({"/static/img/stage2.png": "/static/img/stage2.webp", "/static/img/logo.png": "/static/img/logo.webp"})
 
 COLOR_KEYS = {"color_black", "color_green", "color_white", "color_neon"}
 IMAGE_KEYS = {"logo_image", "hero_accent_image", "favicon_image"}  # podem ficar vazias
@@ -117,6 +143,8 @@ def get_db():
     if "db" not in g:
         g.db = sqlite3.connect(DB_PATH, timeout=10)
         g.db.row_factory = sqlite3.Row
+        g.db.execute("PRAGMA synchronous=NORMAL")
+        g.db.execute("PRAGMA synchronous=NORMAL")
     return g.db
 
 
@@ -144,6 +172,8 @@ def init_db():
             position   INTEGER NOT NULL DEFAULT 0,
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
+        CREATE INDEX IF NOT EXISTS idx_slides_order ON slides (position, id);
+        CREATE INDEX IF NOT EXISTS idx_slides_order ON slides (position, id);
         CREATE TABLE IF NOT EXISTS meta (
             key   TEXT PRIMARY KEY,
             value TEXT NOT NULL
@@ -162,6 +192,14 @@ def init_db():
             [(img, pos) for pos, img in enumerate(DEFAULT_SLIDES)],
         )
         db.execute("INSERT INTO meta (key, value) VALUES ('slides_seeded', '1')")
+    for old, new in LEGACY_PATHS.items():
+        db.execute("UPDATE content SET value = ? WHERE value = ?", (new, old))
+        db.execute("UPDATE slides SET image = ? WHERE image = ?", (new, old))
+    db.execute("PRAGMA optimize")
+    for old, new in LEGACY_PATHS.items():
+        db.execute("UPDATE content SET value = ? WHERE value = ?", (new, old))
+        db.execute("UPDATE slides SET image = ? WHERE image = ?", (new, old))
+    db.execute("PRAGMA optimize")
     db.commit()
     db.close()
 
@@ -216,6 +254,10 @@ def login_locked(ip):
 
 def login_fail(ip):
     with _attempts_lock:
+        if len(_attempts) > 2000:  # evita crescer sem limite
+            now = time.time()
+            for k in [k for k, (_, until) in _attempts.items() if until <= now]:
+                del _attempts[k]
         fails, until = _attempts.get(ip, (0, 0))
         if until and until <= time.time():
             fails = 0
@@ -230,26 +272,75 @@ def login_ok(ip):
 
 @app.after_request
 def security_headers(resp):
-    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
-    resp.headers.setdefault("X-Frame-Options", "SAMEORIGIN")  # o painel embute a prévia
-    resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-    if request.path.startswith(("/admin", "/api")):
-        resp.headers["Cache-Control"] = "no-store"
+    h = resp.headers
+    h.setdefault("X-Content-Type-Options", "nosniff")
+    h.setdefault("X-Frame-Options", "SAMEORIGIN")  # o painel embute a prévia
+    h.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    if request.is_secure:
+        h.setdefault("Strict-Transport-Security", "max-age=31536000")
+    if request.path.startswith(("/admin", "/api", "/logout")):
+        h["Cache-Control"] = "no-store"
+    elif request.path.startswith(("/static/", "/uploads/")) and resp.status_code in (200, 304):
+        # Arquivos versionados (?v=) ou com nome único: o navegador guarda por 1 ano
+        h["Cache-Control"] = "public, max-age=31536000, immutable"
     return resp
+
+
+# URLs de estáticos com ?v=<data de modificação>: cache longo sem servir arquivo velho
+_mtimes = {}
+
+
+def versioned(path):
+    """'/static/img/x.webp' -> '/static/img/x.webp?v=1731...'; outros caminhos passam direto."""
+    if not isinstance(path, str) or not path.startswith("/static/"):
+        return path
+    if path not in _mtimes:
+        try:
+            _mtimes[path] = int(os.path.getmtime(os.path.join(BASE_DIR, path.lstrip("/"))))
+        except OSError:
+            return path
+    return f"{path}?v={_mtimes[path]}"
+
+
+app.jinja_env.filters["ver"] = versioned
+app.jinja_env.globals["static_v"] = lambda name: versioned(url_for("static", filename=name))
 
 
 # --------------------------------------------------------------------------
 # Páginas
 # --------------------------------------------------------------------------
+_page = {"at": 0.0, "html": "", "etag": ""}
+_page_lock = threading.Lock()
+
+
+def public_page():
+    """HTML público pronto + ETag. Fica em memória por poucos segundos em cada worker
+    (e é descartado na hora quando o admin salva): a página não consulta o banco a cada visita."""
+    now = time.monotonic()
+    if _page["html"] and now - _page["at"] < PAGE_TTL:
+        return _page["html"], _page["etag"]
+    html = render_template("index.html", c=load_content(), slides=load_slides(), preview=False)
+    etag = hashlib.sha1(html.encode()).hexdigest()[:20]
+    with _page_lock:
+        _page.update(at=now, html=html, etag=etag)
+    return html, etag
+
+
 @app.route("/")
 def index():
-    is_admin = bool(session.get("admin"))
-    return render_template(
-        "index.html",
-        c=load_content(),
-        slides=load_slides(),
-        preview=is_admin and request.args.get("preview") == "1",
-    )
+    # Só abre a sessão se o visitante tem cookie (evita Vary: Cookie para o público)
+    is_admin = "session" in request.cookies and bool(session.get("admin"))
+    if is_admin:
+        resp = make_response(render_template(
+            "index.html", c=load_content(), slides=load_slides(),
+            preview=request.args.get("preview") == "1"))
+        resp.headers["Cache-Control"] = "private, no-store"
+        return resp
+    html, etag = public_page()
+    resp = make_response(html)
+    resp.set_etag(etag)
+    resp.headers["Cache-Control"] = "public, max-age=30, stale-while-revalidate=120"
+    return resp.make_conditional(request)
 
 
 @app.route("/admin", methods=["GET", "POST"])
@@ -364,6 +455,8 @@ def api_save():
             db.execute("DELETE FROM slides")
             db.executemany("INSERT INTO slides (image, position) VALUES (?, ?)", clean_slides)
 
+    _page["at"] = 0.0
+    _page["html"] = ""
     return jsonify(ok=True, content=load_content(), slides=load_slides())
 
 
@@ -373,21 +466,30 @@ def api_upload():
     file = request.files.get("file")
     if not file or not file.filename:
         return jsonify(error="Nenhum arquivo enviado."), 400
-    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
-    if ext not in ALLOWED_EXT:
-        return jsonify(error="Formato não aceito. Envie PNG, JPG, WEBP ou GIF."), 400
-
-    head = file.stream.read(16)
-    file.stream.seek(0)
-    ok = (
-        head.startswith((b"\x89PNG", b"\xff\xd8\xff", b"GIF8"))
-        or (head.startswith(b"RIFF") and head[8:12] == b"WEBP")
-    )
-    if not ok:
+    raw = file.read()
+    try:
+        img = Image.open(io.BytesIO(raw))
+        fmt = img.format
+        if fmt not in ("PNG", "JPEG", "WEBP", "GIF"):
+            return jsonify(error="Formato não aceito. Envie PNG, JPG, WEBP ou GIF."), 400
+        name = uuid.uuid4().hex
+        if fmt == "GIF" and getattr(img, "is_animated", False):
+            name += ".gif"                       # GIF animado: mantém o original
+            data = raw
+        else:
+            # Corrige a rotação do celular, limita o tamanho e converte para WebP (bem menor)
+            img = ImageOps.exif_transpose(img)
+            img.thumbnail((MAX_IMAGE_SIDE, MAX_IMAGE_SIDE))
+            img = img.convert("RGBA" if "A" in img.getbands() or img.mode == "P" else "RGB")
+            buf = io.BytesIO()
+            img.save(buf, "WEBP", quality=82, method=4)
+            name += ".webp"
+            data = buf.getvalue()
+    except (UnidentifiedImageError, OSError, Image.DecompressionBombError, ValueError):
         return jsonify(error="O arquivo não parece ser uma imagem válida."), 400
 
-    name = f"{uuid.uuid4().hex}.{'jpg' if ext == 'jpeg' else ext}"
-    file.save(os.path.join(UPLOAD_DIR, name))
+    with open(os.path.join(UPLOAD_DIR, name), "wb") as f:
+        f.write(data)
     return jsonify(ok=True, url=f"/uploads/{name}")
 
 
