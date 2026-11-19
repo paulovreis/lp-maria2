@@ -11,16 +11,17 @@
   const val = (i) => (i.type === "checkbox" ? (i.checked ? "1" : "0") : i.value);
   const collect = () => Object.fromEntries($$("[data-key]").map((i) => [i.dataset.key, val(i)]));
 
-  function toast(msg, error) {
+  function toast(msg, error, sticky) {
     const t = Object.assign(document.createElement("div"), { className: "toast" + (error ? " error" : ""), textContent: msg, role: "status" });
     document.body.append(t);
-    setTimeout(() => t.remove(), 3000);
+    if (!sticky) setTimeout(() => t.remove(), error ? 6000 : 3000);
+    return t;
   }
   async function api(url, opts = {}) {
     const res = await fetch(url, { ...opts, credentials: "same-origin", headers: { "X-CSRF-Token": S.csrf, ...(opts.headers || {}) } });
     const data = await res.json().catch(() => ({}));
     if (res.status === 401) { toast("Sessão expirada. Recarregando…", true); setTimeout(() => location.reload(), 1200); }
-    if (!res.ok) throw new Error(data.error || "Erro " + res.status);
+    if (!res.ok) throw new Error(data.error || httpMessage(res.status));
     return data;
   }
   function push() {
@@ -60,15 +61,67 @@
     img.hidden = !v; em.hidden = !!v;
     if (v) img.src = v;
   }
+  /* Fotos JPEG muito grandes (>2 MB) são reduzidas aqui, no navegador, para subirem rápido:
+     só passam de 2560 px para baixo e com qualidade 92 (visualmente igual). PNG, WEBP e GIF
+     vão como estão: o servidor converte sem perda. Se o resultado não ficar menor, envia o original. */
+  const MAX_SIDE = 2560;
+  async function shrink(file) {
+    if (file.type !== "image/jpeg" || file.size < 2 * 1024 * 1024) return file;
+    try {
+      const bmp = await createImageBitmap(file, { imageOrientation: "from-image" });
+      const k = Math.min(1, MAX_SIDE / Math.max(bmp.width, bmp.height));
+      const c = document.createElement("canvas");
+      c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+      const ctx = c.getContext("2d");
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(bmp, 0, 0, c.width, c.height);
+      bmp.close();
+      const blob = await new Promise((r) => c.toBlob(r, "image/webp", 0.92));
+      return blob && blob.type === "image/webp" && blob.size < file.size * 0.9 ? new File([blob], "foto.webp", { type: "image/webp" }) : file;
+    } catch (_) { return file; }
+  }
+
+  function httpMessage(status) {
+    if (status === 413) return "Arquivo grande demais para o servidor (máximo 40 MB).";
+    if (status === 502 || status === 503 || status === 504) return "O servidor está ocupado ou demorou para responder. Tente novamente em instantes.";
+    if (status === 401) return "Sessão expirada. Recarregue a página e entre de novo.";
+    return "Erro " + status + " ao enviar. Tente novamente.";
+  }
+
+  function upload(file, onProgress) {
+    return new Promise((resolve, reject) => {
+      const x = new XMLHttpRequest();
+      x.open("POST", "/api/upload");
+      x.setRequestHeader("X-CSRF-Token", S.csrf);
+      x.timeout = 180000;
+      x.upload.onprogress = (e) => e.lengthComputable && onProgress(Math.round((e.loaded / e.total) * 100));
+      x.onload = () => {
+        let d = {};
+        try { d = JSON.parse(x.responseText); } catch (_) { /* resposta do proxy, não do app */ }
+        x.status >= 200 && x.status < 300 && d.url ? resolve(d.url) : reject(new Error(d.error || httpMessage(x.status)));
+      };
+      x.onerror = () => reject(new Error("Falha de conexão durante o envio. Verifique a internet e tente de novo."));
+      x.ontimeout = () => reject(new Error("O envio demorou demais. Tente de novo (ou use uma imagem menor)."));
+      const fd = new FormData();
+      fd.append("file", file);
+      x.send(fd);
+    });
+  }
+
   function pickImage() {
     return new Promise((resolve) => {
-      const input = Object.assign(document.createElement("input"), { type: "file", accept: "image/png,image/jpeg,image/webp,image/gif" });
+      const input = Object.assign(document.createElement("input"), { type: "file", accept: "image/*,.heic,.heif,.avif" });
       input.addEventListener("change", async () => {
-        if (!input.files[0]) return resolve(null);
-        const fd = new FormData();
-        fd.append("file", input.files[0]);
-        try { toast("Enviando imagem…"); resolve((await api("/api/upload", { method: "POST", body: fd })).url); }
-        catch (err) { toast(err.message, true); resolve(null); }
+        const original = input.files[0];
+        if (!original) return resolve(null);
+        const t = toast("Preparando imagem…", false, true);
+        try {
+          const file = await shrink(original);
+          t.textContent = "Enviando imagem… 0%";
+          resolve(await upload(file, (p) => (t.textContent = "Enviando imagem… " + p + "%")));
+          toast("Imagem enviada");
+        } catch (err) { toast(err.message, true); resolve(null); }
+        finally { t.remove(); }
       });
       input.click();
     });
