@@ -22,21 +22,24 @@ from flask import (
 )
 from flask_compress import Compress
 from PIL import Image, ImageOps, UnidentifiedImageError
+from pillow_heif import register_heif_opener   # HEIC (iPhone) e AVIF
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(BASE_DIR, "data"))
 DB_PATH = os.path.join(DATA_DIR, "lp.sqlite3")
 UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")
-Image.MAX_IMAGE_PIXELS = 40_000_000   # barra "bombas" de descompressão
-MAX_IMAGE_SIDE = 1920                  # uploads são reduzidos a isso
+register_heif_opener()
+Image.MAX_IMAGE_PIXELS = 60_000_000   # barra "bombas" de descompressão (60 MP)
+MAX_IMAGE_SIDE = 2560                  # só reduz se passar disso (telas retina)
+PHOTO_QUALITY = 92                     # WebP de foto: visualmente sem perda
 PAGE_TTL = 5                           # s: cache do HTML renderizado em cada worker
 MAX_SLIDES = 15
 
 app = Flask(__name__)
 app.config.update(
     SECRET_KEY=os.environ.get("SECRET_KEY") or secrets.token_hex(32),
-    MAX_CONTENT_LENGTH=8 * 1024 * 1024,  # 8 MB por upload
+    MAX_CONTENT_LENGTH=40 * 1024 * 1024,  # o painel já reduz a foto no navegador; isto é só o plano B
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=os.environ.get("SESSION_COOKIE_SECURE", "0") == "1",
@@ -460,34 +463,68 @@ def api_save():
     return jsonify(ok=True, content=load_content(), slides=load_slides())
 
 
+# Converte uma imagem por vez em cada worker: várias fotos grandes ao mesmo tempo
+# estouram a memória do container e derrubam o site.
+_convert_lock = threading.Semaphore(1)
+UPLOAD_FORMATS = {"PNG", "JPEG", "WEBP", "GIF", "HEIF", "AVIF"}
+
+
+def optimize_image(raw: bytes):
+    """Devolve (extensão, bytes). Lança ValueError com mensagem pronta para o usuário."""
+    try:
+        img = Image.open(io.BytesIO(raw))
+    except Image.DecompressionBombError:
+        raise ValueError("Imagem com resolução enorme (acima de 60 megapixels). Reduza antes de enviar.")
+    except (UnidentifiedImageError, OSError):
+        raise ValueError("O arquivo não parece ser uma imagem válida. Envie PNG, JPG, WEBP, GIF, HEIC ou AVIF.")
+    if img.format not in UPLOAD_FORMATS:
+        raise ValueError("Formato não aceito. Envie PNG, JPG, WEBP, GIF, HEIC ou AVIF.")
+    if getattr(img, "is_animated", False) and img.format in ("GIF", "WEBP", "PNG"):
+        return ("gif" if img.format == "GIF" else "webp" if img.format == "WEBP" else "png"), raw  # animação: mantém o original
+
+    fmt = img.format
+    with _convert_lock:
+        try:
+            has_alpha = "A" in img.getbands() or img.mode == "P"
+            icc = img.info.get("icc_profile")          # mantém a cor original (fotos de celular são P3)
+            exif = img.getexif()
+            rotated = exif.get(0x0112, 1) != 1
+            too_big = max(img.size) > MAX_IMAGE_SIDE
+            if too_big:
+                # reduz ANTES de decodificar tudo (JPEG decodifica já em escala menor: bem mais rápido)
+                img.draft("RGB", (MAX_IMAGE_SIDE, MAX_IMAGE_SIDE))
+                img.thumbnail((MAX_IMAGE_SIDE, MAX_IMAGE_SIDE), Image.LANCZOS)
+            if rotated:                                  # orientação gravada pelo celular
+                img.info["exif"] = exif.tobytes()
+                img = ImageOps.exif_transpose(img)
+            img = img.convert("RGBA" if has_alpha else "RGB")
+            buf = io.BytesIO()
+            if fmt == "WEBP" and not (too_big or rotated):
+                return "webp", raw                       # já é WebP e nada precisa mudar
+            if fmt == "PNG":
+                img.save(buf, "WEBP", lossless=True, quality=80, method=4, icc_profile=icc)  # pixels idênticos
+            else:
+                img.save(buf, "WEBP", quality=PHOTO_QUALITY, method=4, icc_profile=icc)
+            out = buf.getvalue()
+            # Se a conversão não ficou menor e nada precisou mudar, guarda o original (zero perda)
+            if fmt in ("JPEG", "PNG", "WEBP") and not (too_big or rotated) and len(out) >= len(raw):
+                return {"JPEG": "jpg", "PNG": "png", "WEBP": "webp"}[fmt], raw
+            return "webp", out
+        except (OSError, ValueError, Image.DecompressionBombError):
+            raise ValueError("Não consegui processar esta imagem. Tente salvá-la de novo como JPG ou PNG.")
+
+
 @app.route("/api/upload", methods=["POST"])
 @admin_required
 def api_upload():
     file = request.files.get("file")
     if not file or not file.filename:
         return jsonify(error="Nenhum arquivo enviado."), 400
-    raw = file.read()
     try:
-        img = Image.open(io.BytesIO(raw))
-        fmt = img.format
-        if fmt not in ("PNG", "JPEG", "WEBP", "GIF"):
-            return jsonify(error="Formato não aceito. Envie PNG, JPG, WEBP ou GIF."), 400
-        name = uuid.uuid4().hex
-        if fmt == "GIF" and getattr(img, "is_animated", False):
-            name += ".gif"                       # GIF animado: mantém o original
-            data = raw
-        else:
-            # Corrige a rotação do celular, limita o tamanho e converte para WebP (bem menor)
-            img = ImageOps.exif_transpose(img)
-            img.thumbnail((MAX_IMAGE_SIDE, MAX_IMAGE_SIDE))
-            img = img.convert("RGBA" if "A" in img.getbands() or img.mode == "P" else "RGB")
-            buf = io.BytesIO()
-            img.save(buf, "WEBP", quality=82, method=4)
-            name += ".webp"
-            data = buf.getvalue()
-    except (UnidentifiedImageError, OSError, Image.DecompressionBombError, ValueError):
-        return jsonify(error="O arquivo não parece ser uma imagem válida."), 400
-
+        ext, data = optimize_image(file.read())
+    except ValueError as e:
+        return jsonify(error=str(e)), 400
+    name = f"{uuid.uuid4().hex}.{ext}"
     with open(os.path.join(UPLOAD_DIR, name), "wb") as f:
         f.write(data)
     return jsonify(ok=True, url=f"/uploads/{name}")
@@ -495,7 +532,7 @@ def api_upload():
 
 @app.errorhandler(413)
 def too_large(_e):
-    return jsonify(error="Imagem muito grande. O limite é 8 MB."), 413
+    return jsonify(error="Arquivo grande demais (máximo 40 MB)."), 413
 
 
 init_db()
